@@ -12,7 +12,8 @@ ledger.py — 面向智能体 harness 的复式记账账本（仅依赖标准库
 每条记录内，同一计量单位（unit）的金额之和必须为 0。
 
 退出码：0 = 通过；1 = 检查未通过（规则拒绝、对账不平、意图不符、结账被拒）；
-        2 = 用法错误 / 日记账损坏 / IO 错误 / 内部错误。
+        2 = 用法错误 / 日记账损坏 / IO 错误 / 内部错误；
+        3 = intent settle 结果未知（缺观测、观测不被采信、探针出错），不能当作失败去重做。
 
 运行 `python3 ledger.py --help` 或 `python3 ledger.py <命令> --help` 查看用法。
 """
@@ -44,7 +45,7 @@ try:
 except ImportError:
     msvcrt = None
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 SCHEMA = 1
 GENESIS = "0" * 64
 DELTA_UNIT = "delta"
@@ -229,7 +230,16 @@ def rec_hash(rec: dict) -> str:
 
 
 def now_iso() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds")
+    # 本地时间并带时区偏移：只写 UTC 时，读账的人或模型容易把它当成本地时间
+    return datetime.datetime.now().astimezone().isoformat(timespec="milliseconds")
+
+
+def local_ts(s) -> str:
+    """把记录里的 ts 换成本机时区显示，带偏移；解析失败时原样返回。"""
+    try:
+        return datetime.datetime.fromisoformat(s).astimezone().strftime("%Y-%m-%d %H:%M:%S%z")
+    except (TypeError, ValueError):
+        return str(s or "")
 
 
 def postings_fingerprint(postings):
@@ -882,29 +892,33 @@ class Ledger:
         return "verified" if "verified" in ts else ts[-1]
 
     def _actual_delta(self, it, e):
-        """返回 (actual, note)。actual=None 表示无法确定（缺观测、探针失败、未通过可信度要求）。"""
+        """返回 (actual, note, unknown)。actual=None 表示没有可用的实际值。
+        unknown=True：结果未知（claim 缺观测或观测不被采信、探针执行出错），不能当作「没发生」；
+        unknown=False 且 actual=None：探针目标还不存在（如报告没生成），即效果确实尚未产生。"""
         probe = e["probe"]
         if probe.startswith("claim:"):
             obs = it["observations"].get(probe[6:])
             if not obs:
-                return None, "缺少观测（claim 尚未 observe）"
+                return None, "缺少观测（claim 尚未 observe）", True
             trusts = [(o, self._trust(o)) for o in obs]
             verified = [o for o, t in trusts if t == "verified"]
             chosen = verified[-1] if verified else obs[-1]  # 有签名观测时，后来的未签名观测不能覆盖它
             t = "verified" if verified else self._trust(chosen)
             if self.config.get("reject_self_certified") and t != "verified":
-                return None, f"未经签名核实的观测（{t}），严格模式拒绝"
+                return None, f"未经签名核实的观测（{t}），严格模式拒绝", True
             note = None if t == "verified" else {"self": "自证：由 agent 自报",
                                                   "labelled": "未签名：source 仅为标签",
                                                   "forged": "签名无效"}[t]
-            return to_dec(chosen["value"]), note
+            return to_dec(chosen["value"]), note, False
         try:
             now = self.prober.measure(probe)
+        except ProbeUnavailable as ex:
+            return None, f"尚未产生：{ex}", False
         except LedgerError as ex:
-            return None, f"探针失败：{ex}"
+            return None, f"探针失败：{ex}", True
         if probe.startswith("sha256:"):
-            return Decimal(1 if now != e["baseline"] else 0), None
-        return now - to_dec(e["baseline"]), None
+            return Decimal(1 if now != e["baseline"] else 0), None, False
+        return now - to_dec(e["baseline"]), None, False
 
     def _render_template(self, tool, args):
         """返回 (期望列表, then 列表或 None)。then 为 None 表示模板未声明 then。"""
@@ -1049,10 +1063,10 @@ class Ledger:
             if it["status"] in FINAL_INTENT:
                 raise CheckFailed(f"intent {intent_id} 已{'核销' if it['status'] == 'written_off' else '撤销'}，"
                                   "效果不会再被记账；重做请开新的 intent")
-            results, postings, ok = [], [], True
+            results, postings, ok, definite_miss, any_unknown = [], [], True, False, False
             for i, e in enumerate(it["open"]["expects"]):
                 exp = to_dec(e["expected"])
-                actual, note = self._actual_delta(it, e)
+                actual, note, unknown = self._actual_delta(it, e)
                 prev = it["credited"][i]
                 credited = prev if actual is None else actual
                 inc = credited - prev
@@ -1061,15 +1075,22 @@ class Ledger:
                                  {"account": "intent:effected", "amount": dfmt(inc), "unit": DELTA_UNIT}]
                 match = actual is not None and actual == exp
                 ok = ok and match
+                if not match:
+                    definite_miss = definite_miss or not unknown
+                    any_unknown = any_unknown or unknown
                 r = {"index": i, "probe": e["probe"], "op": e["op"], "expected": dfmt(exp),
                      "actual": None if actual is None else dfmt(actual), "credited": dfmt(credited),
                      "residual": dfmt(exp - credited), "match": match}
                 if note:
                     r["note"] = note
+                if unknown:
+                    r["unknown"] = True
                 if e["probe"].startswith("claim:"):
                     r["trust"] = self._claim_trust(it, e)
                 results.append(r)
-            status, then_error = ("settled" if ok else "mismatch"), None
+            # 只要有一条确定不符就是 mismatch；其余不符全是「结果未知」时记为 unknown（不能当作没发生）
+            status = "settled" if ok else ("unknown" if any_unknown and not definite_miss else "mismatch")
+            then_error = None
             then_lines = it["open"].get("then", [])
             if ok and then_lines:
                 try:
@@ -1132,7 +1153,7 @@ class Ledger:
                         self.prober.measure(e["probe"])
                     except ProbeUnavailable:
                         continue  # 开单时不存在、现在仍不存在：确实没发生
-                actual, note = self._actual_delta(it, e)
+                actual, note, _ = self._actual_delta(it, e)
                 if actual is None:
                     blockers.append(f"{e['probe']} 结果未知（{note}）——无法证明什么都没发生")
                 elif actual != 0 or it["credited"][i] != 0:
@@ -1253,28 +1274,38 @@ class Ledger:
 
         return self._append(build)
 
-    def _close_blockers(self, st):
+    def _close_gaps(self, st, skip=()):
+        """结账门槛里「余额应归零」和「结账前须对账」两类；skip 为不需要重复列出的科目前缀。"""
         out = []
-        for iid, it in st.intents.items():
-            if it["status"] not in FINAL_INTENT:
-                out.append(f"intent {iid} 未结（{it['status']}）")
         for (a, u), v in sorted(st.balances.items()):
+            if skip and a.startswith(skip):
+                continue
             for r in self._rules_for(a, u):
                 if r.get("zero_at_close") and v != 0:
                     out.append(f"{a} [{u}] 结账时应为 0，当前 {dfmt(v)}（规则 {r['match']}）")
                     break
-        out += [f"标红未处理：{m}" for m in self._rule_violations(st.balances.items(), mode="flag")]
         if self.config.get("require_reconcile_before_close"):
             lr = st.last_reconcile
             if not lr or not lr["ok"] or lr["seq"] < st.last_posting_seq:
                 out.append("最后一笔过账之后没有一次全部相符的对账（require_reconcile_before_close）")
         return out
 
+    def _close_blockers(self, st):
+        out = []
+        for iid, it in st.intents.items():
+            if it["status"] not in FINAL_INTENT:
+                out.append(f"intent {iid} 未结（{it['status']}）")
+        out += self._close_gaps(st, skip=("clearing:",))  # 清账余额非零必然对应上面的未结意图，不重复列
+        out += [f"标红未处理：{m}" for m in self._rule_violations(st.balances.items(), mode="flag")]
+        return out
+
     @_exact
-    def close(self, label, actor=None):
+    def close(self, label, actor=None, reviewed_by=None):
         """结账：全部检查通过才写 close 记录，并快照余额与链头哈希（可外部存档作锚点）。
+        本期有人工干预或未核实项时，必须写明复核人 reviewed_by：结账就是人对这些项的签收。
         注意：只校验临时科目已归零，不会自动结转费用类科目。"""
         check_id(label, "close label")
+        _check_text(reviewed_by, "reviewed_by")
 
         def build(st):
             if any(c["label"] == label for c in st.closes):
@@ -1284,9 +1315,15 @@ class Ledger:
             blockers = v["violations"] + self._close_blockers(st)
             if blockers:
                 raise CheckFailed("结账被拒：" + "；".join(blockers), blockers)
+            if v["review"] and not (reviewed_by or "").strip():
+                items = [f"待复核：{m}" for m in v["review"]]
+                raise CheckFailed(f"本期有 {len(items)} 项人工干预或未核实项，结账需由复核人签收（--reviewed-by <姓名>）："
+                                  + "；".join(items), items)
             snap = {bal_key(a, u): dfmt(val) for (a, u), val in sorted(st.balances.items())}
             rec = self._base("close", actor, None, None)
             rec.update({"label": label, "balances": snap, "head_before": st.head})
+            if v["review"]:
+                rec.update({"reviewed_by": reviewed_by.strip(), "reviewed": v["review"]})
             return rec
 
         return self._append(build)
@@ -1299,7 +1336,7 @@ class Ledger:
         st = State()
         txn_ids, intent_ids, reversed_ids = set(), set(), set()
         period_cfg, period_start = None, 1
-        review = []  # 本期需要人复核的干预 / 未核实项；结账即视为已复核
+        review = []  # 本期需要人复核的干预 / 未核实项；结账时由复核人签收
         for r in records:
             where = f"seq {r.get('seq', '?')}"
             try:
@@ -1385,10 +1422,12 @@ class Ledger:
             if a.startswith("suspense:"):
                 warnings.append(f"挂账未清：{a} [{u}] = {dfmt(v)}")
         warnings += [f"标红：{m}" for m in self._rule_violations(st.balances.items(), mode="flag")]
+        # 未结意图的清账余额、挂账已在上面列出；这里补上其余结账门槛（如子预算未归零），strict 与 close 口径一致
+        warnings += [f"结账门槛：{m}" for m in self._close_gaps(st, skip=("clearing:", "suspense:"))]
         if review:
-            warnings.append(f"本期有 {len(review)} 项人工干预或未核实项，需要人复核（结账即视为已复核）：" + "；".join(review[:8])
+            warnings.append(f"本期有 {len(review)} 项人工干预或未核实项，需要人复核（复核人用 close --reviewed-by 签收）：" + "；".join(review[:8])
                             + ("……" if len(review) > 8 else ""))
-        return {"violations": violations, "warnings": warnings, "state": st}
+        return {"violations": violations, "warnings": warnings, "state": st, "review": review}
 
     @_exact
     def verify(self, anchors=(), strict=False):
@@ -1521,7 +1560,7 @@ def _build_parser():
     p.add_argument("intent")
     p.add_argument("--reason", required=True)
     p = ip.add_parser("list", help="列出意图")
-    p.add_argument("--status", choices=["open", "mismatch", "then_rejected", "settled", "written_off",
+    p.add_argument("--status", choices=["open", "mismatch", "unknown", "then_rejected", "settled", "written_off",
                                         "cancelled", "unresolved"])
 
     p = sub.add_parser("reconcile", help="外部对账：账面 vs 探针 / 外部快照")
@@ -1538,6 +1577,7 @@ def _build_parser():
 
     p = sub.add_parser("close", help="结账（全部检查通过才写入）")
     p.add_argument("label")
+    p.add_argument("--reviewed-by", metavar="NAME", help="本期有人工干预或未核实项时必填：签收的复核人（应由人执行）")
 
     p = sub.add_parser("repair", help="手动处理崩溃导致的不完整末行")
     p.add_argument("--drop-torn-tail", action="store_true", required=True)
@@ -1643,7 +1683,9 @@ def _run(led, args):
                 print(f"✗ {m}")
             for m in v["warnings"]:
                 print(f"! {m}")
-            print(("✓ 日记账内部一致" if v["ok"] else "✗ 未通过") + f"（{v['records']} 条记录，链头 {v['head'][:12]}）")
+            head = ("✓ 日记账内部一致，但有上面这些提示：还不能结账，也不能宣称全部完成" if v["ok"] and v["warnings"]
+                    else "✓ 日记账内部一致" if v["ok"] else "✗ 未通过")
+            print(head + f"（{v['records']} 条记录，链头 {v['head'][:12]}）")
         return 0 if v["ok"] else 1
     elif c == "intent":
         return _run_intent(led, args, a)
@@ -1668,7 +1710,7 @@ def _run(led, args):
         rec = led.clear_suspense(args.account, args.to, args.reason, a)
         _out(args, _strip(rec), _rec_line(rec))
     elif c == "close":
-        rec = led.close(args.label, a)
+        rec = led.close(args.label, a, args.reviewed_by)
         _out(args, _strip(rec), f"已结账 {rec['label']}（seq {rec['seq']}）。请把链头哈希存到账外作锚点：{rec['hash']}")
     elif c == "repair":
         r = led.repair_drop_torn_tail()
@@ -1683,9 +1725,10 @@ def _run_intent(led, args, a):
                               _meta(args.meta), args.allow_noop, args.allow_shared_probe)
         human = _rec_line(rec)
         if not rec.get("_duplicate"):
+            paired = any(not e["vacuous"] for e in rec["expects"])
             human += "\n" + "\n".join(
                 f"  期望 {e['probe']} {e['op']}（基线 {e['baseline'][:12] if e['probe'].startswith('sha256:') else e['baseline']}"
-                f"，预期变化 {e['expected']}{'，⚠ 不变' if e['vacuous'] else ''}）" for e in rec["expects"])
+                f"，预期变化 {e['expected']}{('，预期不变：只防倒退，已与会变化的期望配对' if paired else '，⚠ 预期不变：只防倒退，证明不了动作发生过') if e['vacuous'] else ''}）" for e in rec["expects"])
         _out(args, _strip(rec), human)
     elif ic == "observe":
         rec = led.intent_observe(args.intent, args.metric, args.value, args.source, args.evidence, a)
@@ -1694,16 +1737,19 @@ def _run_intent(led, args, a):
         rec = led.intent_settle(args.intent, a)
         st = rec["status"]
         head = {"settled": "✓ 效果与计划相符", "mismatch": "✗ 效果与计划不符，不能报告为已完成",
+                "unknown": "? 结果未知：有效果无法确认（见下方 ?），不能报告为已完成，也不能当作没发生；"
+                           "保持未结，说明需要谁核实什么",
                 "then_rejected": "✗ 效果已核实，但 then 分录违反科目规则，状态未更新"}[st]
         lines = [f"intent {args.intent}：{head}" + ("（此前已结算）" if rec.get("_duplicate") else "")]
         for r in rec["results"]:
-            lines.append(f"  {'✓' if r['match'] else '✗'} {r['probe']} {r['op']}：预期 {r['expected']}，实际 {r['actual']}"
+            mark = "✓" if r["match"] else ("?" if r.get("unknown") else "✗")
+            lines.append(f"  {mark} {r['probe']} {r['op']}：预期 {r['expected']}，实际 {r['actual'] if r['actual'] is not None else ('未知' if r.get('unknown') else '未产生')}"
                          + (f"，残差 {r['residual']}" if r["residual"] != "0" else "")
                          + (f"（{r['note']}）" if r.get("note") else ""))
         if rec.get("then_error"):
             lines.append(f"  {rec['then_error']}")
         _out(args, _strip(rec), "\n".join(lines))
-        return 0 if st == "settled" else 1
+        return 0 if st == "settled" else (3 if st == "unknown" else 1)
     elif ic == "writeoff":
         rec = led.intent_writeoff(args.intent, args.reason, a)
         _out(args, _strip(rec), _rec_line(rec) + "（残差已转入 suspense，结账前须查明并 clear-suspense）")
@@ -1712,8 +1758,8 @@ def _run_intent(led, args, a):
         _out(args, _strip(rec), _rec_line(rec))
     elif ic == "list":
         items = led.intents(args.status)
-        _out(args, items, "\n".join(f"{i['intent']:<24} {i['status']:<14} {i['tool']:<16} {'; '.join(i['expects'])}"
-                                    for i in items) or "（无）")
+        _out(args, items, "\n".join(f"{i['intent']:<24} {i['status']:<14} {i['tool']:<16} 开立于 {local_ts(i['opened_ts'])}  "
+                                    f"{'; '.join(i['expects'])}" for i in items) or "（无）")
     return 0
 
 

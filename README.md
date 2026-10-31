@@ -73,7 +73,7 @@ bash examples/demo.sh
 | Intent → act → settle (effects measured by code probes; state updated only after verification; expectation templates) | `intent open / settle / observe / writeoff / cancel / list` |
 | External reconciliation (directories, JSON, external snapshots, period activity); differences go to suspense | `reconcile [--snapshot] [--adjust] [--since-close]` |
 | Suspense listing and clearing with a reason | `suspense` / `clear-suspense` |
-| Period close (temporary accounts must be zero, red flags handled; snapshots balances and chain head hash) | `close` |
+| Period close (temporary accounts must be zero, red flags handled; snapshots balances and chain head hash; names the reviewer when there are review items) | `close [--reviewed-by NAME]` |
 | Full verification (hash chain, balance, rules, close snapshots, external anchor, strict mode) | `verify [--anchor] [--strict]` |
 | Trial balance / balances | `trial` / `balance` |
 
@@ -82,6 +82,8 @@ bash examples/demo.sh
 `SKILL.md` and this README are in English. `references/*.md`, the demo comments and the CLI's messages are currently in Chinese; Claude reads them fine, and English translations are welcome.
 
 ## Version
+
+0.3.0 — fixes from a field trial (fault injection through a harness, plus agents with and without the skill on the same tasks): settle now reports `unknown` (not `mismatch`, CLI exit code 3) when an outcome can't be measured; `verify --strict` also lists close blockers such as sub-agent budgets not back to zero; `close` requires `--reviewed-by` when the period has review items; timestamps carry the local UTC offset and `intent list` shows local time; SKILL.md gained a "Common situations" table and a corrected rule on zero-change expectations.
 
 0.2.0 — went through two rounds of adversarial review (code red team, concept/loophole red team, under-pressure scenario runs); every finding is fixed and has a regression test.
 Tested on macOS + Python 3.9. File locking on Windows is untested.

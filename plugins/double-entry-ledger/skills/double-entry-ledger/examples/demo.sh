@@ -41,7 +41,8 @@ L post --id fix-sus 'suspense:reconcile:expense:tokens:B 20 tokens' 'budget:agen
 L clear-suspense suspense:reconcile:expense:tokens:B --to budget:agent:B --reason 'B 有 20 已花未报，计入其预算'
 L transfer --id topup-B --from budget:pool --to budget:agent:B --amount 520 --unit tokens --memo '补批 B 的超支'
 L verify --strict                                                  # 账已平，但对账调整、清挂账属于人工干预 → 列出待复核
-L close run-1                                                      # 人复核后结账，即确认
+L close run-1                                                      # 有待复核项时，没写复核人 → 被拒
+L close run-1 --reviewed-by 张三                                   # 人复核后签收结账
 L verify --strict
 
 echo; echo "== 5. 篡改检测 =="

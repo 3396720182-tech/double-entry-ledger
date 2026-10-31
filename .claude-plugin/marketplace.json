@@ -9,7 +9,7 @@
     {
       "name": "double-entry-ledger",
       "description": "A stdlib-only double-entry ledger skill that keeps agent memory/state, tool-call outcomes and multi-agent token budgets self-checking: every change is a balanced entry, every side effect is cleared against code-measured probes, and budgets must net to zero at close.",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "author": {
         "name": "yzx"
       },

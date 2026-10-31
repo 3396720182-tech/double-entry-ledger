@@ -11,7 +11,7 @@ SKILL.md 是写给**受约束的 agent** 看的；这份文档写给**搭 harnes
 - [ ] 每种有副作用的工具都配了 `expect_templates`（包括它触发的 `then` 状态迁移），并开 `require_expect_template: true`。这样模型既不能选更弱的期望，也不能给任意动作挂上任意的状态迁移。
 - [ ] 模型拿到的 `--snapshot` 只能来自你的观察脚本。对账调整受保护科目必须写 `--reason`，并会进入人工复核清单。
 - [ ] 每次 `close` 输出的链头哈希写到账外（git commit message、OpenSpec archive、飞书文档），审计时用 `verify --anchor`。
-- [ ] 明确由**人**执行 `close`。`verify --strict` 会列出本期的人工干预（`--direct`、核销、清挂账、对账调整、override、未签名观测），close 就是人对这些项的确认。
+- [ ] 明确由**人**执行 `close`。`verify --strict` 会列出本期的人工干预（`--direct`、核销、清挂账、对账调整、override、未签名观测）；有这些项时 `close` 必须带 `--reviewed-by <复核人>`，复核人和复核清单会写进 close 记录。最好让模型的执行环境调不到 `close`。
 - [ ] 想清楚账本损坏时怎么处理：失败即关（停止执行，等人处理），还是失败即放（记告警、继续跑）。崩溃留下的不完整末行默认会自动截掉；其他损坏一律拒绝继续。
 
 ## 1. Python API
@@ -26,12 +26,12 @@ led.post("t-1", ["world:created -1", "state:todo 1"], memo="新任务 X", meta={
 led.transfer("t-2", "budget:pool", "budget:agent:A", 5000, unit="tokens")
 led.intent_open("call-17", tool="mv", args={"src": "tasks/todo/x.md", "dst": "tasks/done/x.md"},
                 then=["state:todo -1", "state:done 1"], meta={"tool_use_id": "toolu_..."})
-r = led.intent_settle("call-17")               # r["status"]: settled / mismatch / then_rejected
+r = led.intent_settle("call-17")               # r["status"]: settled / mismatch / unknown / then_rejected
 v = led.verify(strict=True)                    # {"ok", "violations", "warnings", ...}
 ```
 
 - 写操作返回记录 dict。重复提交时返回原记录，并带 `_duplicate: True`。
-- `CheckFailed` 表示业务检查未通过（退出码 1），`.details` 里是逐条原因。其他 `LedgerError` 是用法或账本损坏（退出码 2）。
+- `CheckFailed` 表示业务检查未通过（退出码 1），`.details` 里是逐条原因。其他 `LedgerError` 是用法或账本损坏（退出码 2）。CLI 的 `intent settle` 结果未知时退出码为 3。
 - 每个进程实例化一次 `Ledger` 即可，所有操作都在文件锁内完成，多进程、多 agent 共用同一份日记账是安全的。
 
 ## 2. 挂在工具执行器上
@@ -44,6 +44,8 @@ def run_tool(call):
     for name, value in extract_claims(call.name, result):            # 从结构化返回值取，不读模型叙述
         led.intent_observe(call.id, name, value, source="tool", evidence=result.request_id)
     r = led.intent_settle(call.id)
+    if r["status"] == "unknown":                                     # 缺观测 / 探针出错：不是失败，别让模型重试
+        return tool_error(f"结果未知，保持未结、不要重做：{r['results']}")
     if r["status"] != "settled":
         return tool_error(f"效果与计划不符：{r['results']}")         # 结构化错误还给模型
     return result
@@ -69,6 +71,13 @@ def run_tool(call):
 **签名观测**：harness 进程的环境里有 `LEDGER_OBSERVER_KEY` 时，`intent_observe` 会自动给 `(intent, metric, value)` 加 HMAC 签名；settle 时用同一把密钥验签。
 没有签名的 `source=tool` 只是标签。模型也可以写 `--source tool`，所以严格模式下这类观测一律不算数。
 有签名的观测一旦存在，之后未签名的观测不能覆盖它。
+
+**人工核实**：claim 结果未知（settle 状态 `unknown`）时，由人查证（比如看发件箱），再在**持有密钥**的环境里写入观测，然后结算：
+
+```bash
+LEDGER_OBSERVER_KEY=... L intent observe notify-client --metric sent --value 1 --source observer --evidence '发件箱 11-01 06:29 已发'
+L intent settle notify-client
+```
 
 ## 3. 对应到 OpenSpec / SDD
 
@@ -102,8 +111,9 @@ equity:funding → budget:pool → budget:agent:<id> → expense:tokens:<id>
 把实体 id 当计量单位，余额就表示它当前在哪个池子里：
 
 ```bash
-$L post --id new-42 'world:created -1 task42' 'state:todo 1 task42'
-$L intent open mv-42 --tool mv --arg src=tasks/todo/42.md --arg dst=tasks/done/42.md \
+L() { python3 <skill>/scripts/ledger.py "$@"; }   # 用函数而不是 L="python3 ..."：zsh 不会拆分 $L
+L post --id new-42 'world:created -1 task42' 'state:todo 1 task42'
+L intent open mv-42 --tool mv --arg src=tasks/todo/42.md --arg dst=tasks/done/42.md \
    --then 'state:todo -1 task42' --then 'state:done 1 task42'
 ```
 

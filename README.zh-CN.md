@@ -69,11 +69,13 @@ bash examples/demo.sh
 | 意图 → 动手 → 结算（代码探针取数，核实后才更新状态，支持期望模板） | `intent open / settle / observe / writeoff / cancel / list` |
 | 外部对账（目录、JSON、外部快照、按期发生额），差额进挂账 | `reconcile [--snapshot] [--adjust] [--since-close]` |
 | 挂账清单与带原因清理 | `suspense` / `clear-suspense` |
-| 结账（要求临时科目已归零、标红已处理；快照余额与链头哈希） | `close` |
+| 结账（要求临时科目已归零、标红已处理；快照余额与链头哈希；有待复核项时写明复核人） | `close [--reviewed-by 姓名]` |
 | 全量校验（哈希链、平衡、规则、结账快照、账外锚点、严格模式） | `verify [--anchor] [--strict]` |
 | 试算平衡表 / 余额 | `trial` / `balance` |
 
 ## 版本
+
+0.3.0：根据实测（经 harness 注入故障；带 / 不带 skill 的 agent 做同一批任务）修复：结果无法测量时 settle 状态为 `unknown`（CLI 退出码 3），不再混同于 `mismatch`；`verify --strict` 也列出结账门槛（如子 agent 预算没归零）；有待复核项时 `close` 必须写明复核人（`--reviewed-by`）；时间戳带本机时区偏移，`intent list` 显示本机时间；SKILL 新增「常见情形」，并更正了「预期变化为 0」那条规则。
 
 0.2.0：经过两轮对抗性审查（代码红队、概念/漏洞红队、受压场景实测），审查发现均已修复并配有回归用例。
 在 macOS + Python 3.9 上测试通过；Windows 文件锁未实测。

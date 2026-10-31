@@ -346,7 +346,7 @@ class TestIntent(Base):
         self.led.clear_suspense("suspense:intent:i1:0", "loss:intent", "查明：mv 未执行")
         self.led.clear_suspense("suspense:intent:i1:1", "loss:intent", "同上")
         self.assertEqual(self.led.suspense(), [])
-        self.led.close("p1")
+        self.led.close("p1", reviewed_by="张三")
 
     def test_cancel_only_if_nothing_happened(self):
         self.open_move()
@@ -385,7 +385,7 @@ class TestIntent(Base):
 
     def test_claim_and_trust_levels(self):
         self.led.intent_open("e1", ["claim:emails_sent =1"])
-        self.assertEqual(self.led.intent_settle("e1")["status"], "mismatch")
+        self.assertEqual(self.led.intent_settle("e1")["status"], "unknown")  # r3: 缺观测是未知，不是没发生
         self.led.intent_observe("e1", "emails_sent", 1, "agent", "我发了")
         r = self.led.intent_settle("e1")
         self.assertEqual(r["status"], "settled")
@@ -396,7 +396,7 @@ class TestIntent(Base):
         strict = L.Ledger(self.j, {"reject_self_certified": True})
         strict.intent_open("e2", ["claim:emails_sent =1"])
         strict.intent_observe("e2", "emails_sent", 1, "tool", "我说是工具写的")  # 模型冒充 tool
-        self.assertEqual(strict.intent_settle("e2")["status"], "mismatch")
+        self.assertEqual(strict.intent_settle("e2")["status"], "unknown")  # 不采信，结果仍未知
         os.environ["LEDGER_OBSERVER_KEY"] = "harness-secret"
         strict.intent_observe("e2", "emails_sent", 1, "tool", "smtp 250 id=123")  # harness 持钥签名
         r = strict.intent_settle("e2")
@@ -682,7 +682,11 @@ class TestRound2(Base):
         self.led.clear_suspense("suspense:intent:w1:0", "loss:x", "放弃")
         v = self.led.verify(strict=True)
         self.assertFalse(v["ok"])
-        self.led.close("p1")  # 人复核后结账
+        with self.assertRaises(L.CheckFailed):  # r3: 有复核项时必须写明复核人
+            self.led.close("p1")
+        rec = self.led.close("p1", reviewed_by="张三")  # 人复核后结账
+        self.assertEqual(rec["reviewed_by"], "张三")
+        self.assertEqual(len(rec["reviewed"]), 2)
         self.assertTrue(self.led.verify(strict=True)["ok"])
 
     def test_r2_cancel_when_json_report_never_appeared(self):
@@ -705,6 +709,84 @@ class TestRound2(Base):
         self.assertEqual(self.bal("pool:a"), "0")
 
 
+class TestRound3(Base):
+    """T0010 实测发现的问题"""
+
+    def test_r3_strict_lists_close_gaps(self):
+        self.led.post("f", ["equity:funding -100 tokens", "budget:pool 100 tokens"])
+        self.led.transfer("g", "budget:pool", "budget:agent:A", 50, unit="tokens")
+        v = self.led.verify(strict=True)
+        self.assertFalse(v["ok"])  # 子预算没归零：strict 与 close 口径一致
+        self.assertTrue(any("结账门槛" in w and "budget:agent:A" in w for w in v["warnings"]))
+        self.assertTrue(self.led.verify()["ok"])  # 非 strict 只是提示
+        self.led.transfer("r", "budget:agent:A", "budget:pool", 50, unit="tokens")
+        self.assertTrue(self.led.verify(strict=True)["ok"])
+        self.led.close("p1")
+
+    def test_r3_close_gaps_not_duplicated_for_intents_and_suspense(self):
+        self.led.intent_open("w1", ["exists:out.txt =1"])
+        self.assertFalse(any("结账门槛" in w for w in self.led.verify()["warnings"]))  # 未结意图已单独列出
+        self.led.intent_settle("w1")
+        self.led.intent_writeoff("w1", "放弃")
+        self.assertFalse(any("结账门槛" in w for w in self.led.verify()["warnings"]))  # 挂账已单独列出
+
+    def test_r3_close_blockers_not_duplicated_for_open_intent(self):
+        self.led.intent_open("e1", ["claim:sent =1"])
+        with self.assertRaises(L.CheckFailed) as cm:
+            self.led.close("p1")
+        self.assertEqual(len(cm.exception.details), 1, cm.exception.details)  # 只列「intent 未结」，不再重复列清账余额
+
+    def test_r3_reconcile_requirement_visible_in_strict(self):
+        led = L.Ledger(self.j, {"require_reconcile_before_close": True,
+                                "reconcile": [{"account": "pool:a", "probe": "exists:a.txt"}]})
+        (self.root / "a.txt").write_text("x")
+        led.post("t", ["world:a -1", "pool:a 1"])
+        self.assertTrue(any("对账" in w for w in led.verify(strict=True)["warnings"]))
+        led.reconcile()
+        self.assertTrue(led.verify(strict=True)["ok"])
+
+    def test_r3_unknown_vs_mismatch(self):
+        self.led.intent_open("e1", ["claim:sent =1"])
+        r = self.led.intent_settle("e1")
+        self.assertEqual(r["status"], "unknown")
+        self.assertTrue(r["results"][0]["unknown"])
+        self.assertEqual([i["intent"] for i in self.led.intents("unknown")], ["e1"])
+        self.assertEqual([i["intent"] for i in self.led.intents("unresolved")], ["e1"])
+        with self.assertRaises(L.CheckFailed):  # 未知仍不能撤销
+            self.led.intent_cancel("e1", "不知道")
+        # 有一条确定不符时就是 mismatch
+        self.led.intent_open("e2", ["claim:sent =1", "exists:out/mail.log =1"])
+        self.assertEqual(self.led.intent_settle("e2")["status"], "mismatch")
+        # 报告文件还没生成：确定尚未产生，不是未知
+        self.led.intent_open("j1", ["json:report.json#failed =0", "sha256:report.json changed"])
+        r = self.led.intent_settle("j1")
+        self.assertEqual(r["status"], "mismatch")
+        self.assertFalse(any(x.get("unknown") for x in r["results"]))
+        # 观测补上后可以结清
+        self.led.intent_observe("e1", "sent", 1, "observer", "人工查了发件箱")
+        self.assertEqual(self.led.intent_settle("e1")["status"], "settled")
+        self.assertEqual(self.cli("intent", "list", "--status", "unknown"), 0)
+
+    def test_r3_unknown_cli_exit_code(self):
+        self.led.intent_open("e1", ["claim:sent =1"])
+        self.assertEqual(self.cli("intent", "settle", "e1"), 3)  # 未知与失败分开，脚本化调用也能区分
+        self.led.intent_open("e2", ["exists:nope =1"])
+        self.assertEqual(self.cli("intent", "settle", "e2"), 1)
+
+    def test_r3_timestamps_carry_local_offset(self):
+        rec = self.led.post("t", ["world:a -1", "pool:a 1"])
+        import datetime as dt
+        ts = dt.datetime.fromisoformat(rec["ts"])
+        self.assertIsNotNone(ts.tzinfo)
+        self.assertEqual(ts.utcoffset(), dt.datetime.now().astimezone().utcoffset())
+        self.assertIn(L.local_ts(rec["ts"])[:10], rec["ts"])
+        self.assertEqual(L.local_ts("garbage"), "garbage")
+        # 老版本写入的 UTC 时间戳也能换算成本地时间
+        self.assertEqual(L.local_ts("2026-10-31T22:27:58.494+00:00"),
+                         dt.datetime(2026, 10, 31, 22, 27, 58, tzinfo=dt.timezone.utc).astimezone()
+                         .strftime("%Y-%m-%d %H:%M:%S%z"))
+
+
 class TestCLI(Base):
     def test_cli_flow_and_exit_codes(self):
         self.assertEqual(self.cli("init"), 0)
@@ -721,7 +803,8 @@ class TestCLI(Base):
         self.assertEqual(self.cli("intent", "writeoff", "i1", "--reason", "放弃"), 0)
         self.assertEqual(self.cli("--json", "suspense"), 0)
         self.assertEqual(self.cli("clear-suspense", "suspense:intent:i1:0", "--to", "loss:x", "--reason", "放弃"), 0)
-        self.assertEqual(self.cli("close", "p"), 0)
+        self.assertEqual(self.cli("close", "p"), 1)  # 核销、清挂账待复核：没写复核人
+        self.assertEqual(self.cli("close", "p", "--reviewed-by", "张三"), 0)
         self.assertEqual(self.cli("post", "--id", "bad", "only:one 1"), 1)
         self.assertEqual(self.cli("reverse", "--id", "r", "--of", "nope", "--reason", "x"), 2)
         self.assertEqual(self.cli("post", "--id", "m", "--meta", '{"x":"\\ud800"}', "world:a -1", "pool:a 1"), 2)
