@@ -120,6 +120,8 @@ L intent settle notify-client
 | 验证 | `run_tests` 模板：`json:report#failed =0` + `sha256:report changed`，防止拿旧报告过关 |
 | archive | `reconcile`（对照 tasks.md 勾选和文件）→ `verify --strict` → `close <change-id>` → 链头哈希写进 archive |
 
+上表核对的是 change 执行过程中每一步的效果。「这次 change 的设计决策有没有全部落到代码里」是另一本账：归档前用同插件里的 `landing-ledger` skill（借方来自 proposal/spec/ADR，凭证由实现会话逐笔交，门禁只拦高精度信号）。
+
 ## 4. 多 agent 预算
 
 ```

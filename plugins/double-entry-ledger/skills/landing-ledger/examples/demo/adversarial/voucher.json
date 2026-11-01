@@ -1,0 +1,22 @@
+[
+ {
+  "debit_id": "ADR-002#1",
+  "status": "claimed_landed",
+  "defs": [
+   {
+    "file": "src/audit/log.ts",
+    "line": 5,
+    "symbol": "recordAudit"
+   }
+  ],
+  "sites": [
+   {
+    "file": "src/notes/notebooks.ts",
+    "line": 5,
+    "symbol": "recordAudit"
+   }
+  ],
+  "tests": [],
+  "note": "对抗凭证：拿改名时的审计日志冒充删除前的审计日志"
+ }
+]

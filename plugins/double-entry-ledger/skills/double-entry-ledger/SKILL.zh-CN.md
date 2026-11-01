@@ -104,3 +104,4 @@
 - `references/integration.md`：**搭建者看**。接入 harness（Python API、钩子、签名观测、期望模板、OpenSpec/SDD、多 agent 预算、配置）
 - `references/design.md`：会计概念映射、各项检查能抓什么不能抓什么、已知局限
 - `examples/demo.sh`：端到端演示；`python3 scripts/ledger.py <cmd> --help` 查看各命令参数
+- `../landing-ledger/`：跨会话的另一本账——设计决策（ADR、spec、tasks.md）有没有落到代码里。OpenSpec/SDD 归档门禁用它；本 skill 管的是会话内的单次工具调用

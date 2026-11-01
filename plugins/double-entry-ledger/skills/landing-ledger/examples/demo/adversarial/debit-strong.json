@@ -1,0 +1,23 @@
+[
+ {
+  "id": "ADR-002#1",
+  "source": "docs/decisions/ADR-002-audit-log.md:7",
+  "doc_kind": "adr",
+  "doc_status": "Accepted",
+  "doc_says": "unspecified",
+  "claim": "删除笔记本之前由 notebooks 模块调用 recordAudit，action 为 DELETE，写失败就不删",
+  "code_checkable": true,
+  "evidence": {
+   "symbols": [
+    "recordAudit"
+   ],
+   "call": {
+    "symbol": "recordAudit",
+    "scope_hint": "notebooks",
+    "must_include": [
+     "DELETE"
+    ]
+   }
+  }
+ }
+]

@@ -132,3 +132,4 @@ Outside Claude Code, or for intents you open yourself, the rules below apply.
 - `references/design.md`: accounting concept mapping, what each check can and cannot catch, known limitations. *(Chinese)*
 - `examples/demo.sh`: end-to-end demo; `python3 scripts/ledger.py <cmd> --help` for per-command options.
 - `SKILL.zh-CN.md`: the original Chinese version of these rules.
+- `../landing-ledger/`: the cross-session counterpart — did design decisions (ADRs, specs, tasks.md) land in code. Use it for OpenSpec/SDD archive gates; this skill covers individual tool calls inside a session.

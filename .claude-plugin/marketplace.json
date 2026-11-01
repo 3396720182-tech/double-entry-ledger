@@ -1,21 +1,21 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "double-entry-ledger",
-  "description": "Double-entry bookkeeping for LLM-agent harnesses: balanced state changes, code-verified tool intents, reconciliation and period close.",
+  "description": "Double-entry bookkeeping for LLM-agent harnesses: runtime tool-call reconciliation with Claude Code hooks, and design-decision → code landing checks.",
   "owner": {
     "name": "yzx"
   },
   "plugins": [
     {
       "name": "double-entry-ledger",
-      "description": "A stdlib-only double-entry ledger skill that keeps agent memory/state, tool-call outcomes and multi-agent token budgets self-checking: every change is a balanced entry, every side effect is cleared against code-measured probes, and budgets must net to zero at close.",
-      "version": "0.4.0",
+      "description": "Double-entry bookkeeping for agent harnesses, as two skills: a runtime ledger (balanced state changes, tool-call intents cleared against code-measured probes, Claude Code hooks, multi-agent budgets that must net to zero) and a landing ledger (design decisions as debits, one voucher per debit from the implementer, mechanical checks and a high-precision gate, reverse scan for unwired code).",
+      "version": "0.5.0",
       "author": {
         "name": "yzx"
       },
       "source": "./plugins/double-entry-ledger",
       "category": "development",
-      "keywords": ["agent", "harness", "memory", "ledger", "double-entry", "reconciliation", "budget", "hooks", "claude-code"]
+      "keywords": ["agent", "harness", "memory", "ledger", "double-entry", "reconciliation", "budget", "hooks", "claude-code", "spec", "openspec", "sdd", "landing"]
     }
   ]
 }

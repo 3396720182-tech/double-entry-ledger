@@ -2,15 +2,30 @@
 
 [中文说明](README.zh-CN.md)
 
-Double-entry bookkeeping for LLM-agent harnesses, packaged as a Claude Code plugin. It makes three things **self-checking in code**, so errors are caught where they happen instead of relying on the model's judgment:
+Double-entry bookkeeping for LLM-agent harnesses, packaged as a Claude Code plugin. When an agent says "done", it has to produce a voucher and code reconciles it — instead of trusting the agent's summary.
 
-- memory and state changes
-- tool calls: "planned" vs. "actually happened"
-- token / budget allocation across multiple agents
+One plugin, two ledgers, for two time scales:
 
-> In one line: **a trial balance only proves the ledger is internally consistent; truth comes from reconciliation.** So beyond balanced entries there is intent clearing, external reconciliation, suspense accounts and period close.
+| Skill | Checks | How | Use it for |
+|---|---|---|---|
+| `double-entry-ledger` (runtime ledger) | Within a session: the effect of each tool call, state transitions, multi-agent budgets | Open an intent before the call (debit), measure the effect with code probes after it (credit); in Claude Code the hooks do this automatically and show the ledger's verdict to the user at Stop | Weaker models and sub-agents, agents told "don't check", unattended runs, crash recovery, multi-agent budgets |
+| `landing-ledger` (landing ledger) | Across sessions: did design decisions (ADRs, specs, tasks.md) actually land in code | A docs-only session opens debits, a code-reading session answers each with a voucher, code checks the vouchers; the gate blocks only high-precision signals; a reverse scan covers what nobody wrote down | OpenSpec/SDD archive gates, auditing half-landed work, accepting sub-agent output |
 
-The core is a single stdlib-only Python file (`ledger.py`, Python 3.8+): an append-only, hash-chained JSONL journal. Every state change is a balanced entry, every side-effecting tool call is an *intent* cleared against code-measured effects, and multi-agent budgets must net to zero at close.
+> In one line: **a trial balance only proves the ledger is internally consistent; truth comes from reconciliation.** What does the work is the structure "one voucher per debit", not grep catching liars.
+
+## Architecture
+
+Start with [docs/architecture.md](docs/architecture.md) (Chinese): the two ledgers, how they map onto the five layers of a model harness (constraints / routing / feedback / verdict / adversarial testing), when to turn on which, and a rollout path. The evidence is in [experiments/](experiments/README.md):
+
+| Experiment | Result |
+|---|---|
+| E1 fault injection + agents using the skill themselves | Harness fault injection 19/19 as expected; a strong model is equally honest with or without the skill, which only adds cost |
+| E2 hooks A/B, 98 real `claude -p` runs | Opus: 0 false "done" in every condition (hooks cost +60–120 %). Haiku told "hurry, don't open files to check": false "done" in 7/8 runs without the skill vs 1/10 with the final hooks. Rules without hooks made agents deliver *less* |
+| E3 history replay on a real (closed-source) repo, de-identified | 4 of the 5 half-landings found by a later human audit caught + 1 clue; the archive gate would have blocked 24 days before the audit; precision of grep-based rejection ~5 %, of "admitted unlanded" 97 %, of "superseded but not reversed" 100 % |
+
+Positioning: **for a strong model checking its own short task in a single session, neither ledger adds anything.** The value is where the model won't look back (weaker models, pressure, sub-agents, unattended runs) and where people can't remember (decisions across sessions, half-finished state after a crash, multi-agent spend).
+
+The runtime ledger's core is a single stdlib-only Python file (`ledger.py`, Python 3.8+): an append-only, hash-chained JSONL journal. Every state change is a balanced entry, every side-effecting tool call is an *intent* cleared against code-measured effects, and multi-agent budgets must net to zero at close. The landing ledger's core is another single stdlib-only file (`landing.py`).
 
 ## Install (Claude Code)
 
@@ -27,9 +42,9 @@ Or the classic two steps:
 /plugin install double-entry-ledger@double-entry-ledger
 ```
 
-Then run `/reload-plugins` (or restart Claude Code). The skill loads automatically when a task matches its description, or you can invoke it as `/double-entry-ledger` (or with the plugin prefix, `/double-entry-ledger:double-entry-ledger`).
+Then run `/reload-plugins` (or restart Claude Code). Both skills load automatically when a task matches their description, or you can invoke them as `/double-entry-ledger` and `/landing-ledger` (or with the plugin prefix, e.g. `/double-entry-ledger:landing-ledger`).
 
-### Using it in Claude Code: invoke once, hooks are on
+### Runtime ledger in Claude Code: invoke once, hooks are on
 
 Type `/double-entry-ledger <your task>`. The hooks declared in the skill's frontmatter register when the skill is invoked and stay on for the rest of the session — no settings to edit:
 
@@ -45,40 +60,74 @@ Updating later: `/plugin marketplace update double-entry-ledger`.
 
 ### Without the plugin system
 
-- **Personal skill**: copy `plugins/double-entry-ledger/skills/double-entry-ledger/` to `~/.claude/skills/double-entry-ledger/`. The hooks come with it and turn on when the skill is invoked.
+- **Personal skill**: copy `plugins/double-entry-ledger/skills/double-entry-ledger/` to `~/.claude/skills/double-entry-ledger/`. The hooks come with it and turn on when the skill is invoked. Same for `skills/landing-ledger/` → `~/.claude/skills/landing-ledger/`.
 - **Project skill**: copy it to `.claude/skills/double-entry-ledger/` in your repo.
 - **Other hosts that follow the SKILL.md convention**: put the same directory in that host's skills folder.
-- **Just the tool**: `scripts/ledger.py` has no other dependencies — drop it into your harness.
+- **Just the tools**: `scripts/ledger.py` and `landing-ledger/scripts/landing.py` have no other dependencies — drop them into your harness or CI.
 
 **Before wiring it into a harness, read the deployment checklist in `references/integration.md` §0.** Separation of duties has to be enforced by your deployment; installing the skill alone is not enough.
+
+## Landing ledger: did the decisions land in code?
+
+`/landing-ledger <scope>`, e.g. "run the pre-archive landing check for openspec/changes/add-billing". The skill orchestrates: docs-only sub-agents open debits → code-reading sub-agents submit one voucher per debit → `landing.py reconcile` checks them and prints the gate verdict → `landing.py orphans` runs the reverse scan → reviewer sub-agents go through the review list. The script also works on its own:
+
+```bash
+LD() { python3 plugins/double-entry-ledger/skills/landing-ledger/scripts/landing.py "$@"; }
+LD lint --debits debits.json --vouchers vouchers.json
+LD reconcile <code-root> --debits debits.json --vouchers vouchers.json --tests not-run   # 0 pass / 1 block / 3 review or unchecked
+LD orphans <code-root>
+```
+
+| Gate | Verdicts |
+|---|---|
+| Block | no voucher, invalid voucher, admitted unlanded, self-reported deviation, decision superseded but the source doc not reversed |
+| Review (not blocking; blocking with `--strict`) | mechanical rejection (~5 % precision in the replay), no test references it, debit names nothing checkable |
+| Not checked | whether tests really ran (`--tests`) — never counted as passed |
+
+Formats: `landing-ledger/references/schema.md`; method and the data behind the gate: `references/method.md` (both Chinese). Demo: `bash plugins/double-entry-ledger/skills/landing-ledger/examples/demo.sh`.
 
 ## Repository layout
 
 ```
+docs/architecture.md                     # architecture (start here)
+experiments/                             # E1 / E2 / E3: reports, reproducible scripts, data
 .claude-plugin/marketplace.json          # marketplace catalog (one plugin)
 plugins/double-entry-ledger/
 ├── .claude-plugin/plugin.json           # plugin manifest
-└── skills/double-entry-ledger/
-    ├── SKILL.md                         # rules for the agent bound by the ledger (English)
-    ├── SKILL.zh-CN.md                   # same rules, original Chinese version
-    ├── scripts/ledger.py                # single file, stdlib only (CLI + importable)
-    ├── scripts/cc_hook.py               # Claude Code hook adapter (registered in SKILL.md frontmatter; on when the skill is invoked)
-    ├── references/integration.md        # for harness builders: checklist, API, hooks, signing, templates, SDD, budgets
-    ├── references/design.md             # accounting concept mapping, what is/isn't caught, known limits
-    ├── examples/demo.sh                 # end-to-end demo (runs in a temp dir)
-    ├── tests/test_ledger.py             # 80 tests: concurrency, tampering, crash recovery, red-team regressions
-    └── tests/test_cc_hook.py            # hook adapter, driven through the real hook protocol: parsing, settling, guard, Stop
+└── skills/
+    ├── double-entry-ledger/             # runtime ledger
+    │   ├── SKILL.md                     # rules for the agent bound by the ledger (English)
+    │   ├── SKILL.zh-CN.md               # same rules, original Chinese version
+    │   ├── scripts/ledger.py            # single file, stdlib only (CLI + importable)
+    │   ├── scripts/cc_hook.py           # Claude Code hook adapter (registered in SKILL.md frontmatter; on when the skill is invoked)
+    │   ├── references/integration.md    # for harness builders: checklist, API, hooks, signing, templates, SDD, budgets
+    │   ├── references/design.md         # accounting concept mapping, what is/isn't caught, known limits
+    │   ├── examples/demo.sh             # end-to-end demo (runs in a temp dir)
+    │   ├── tests/test_ledger.py         # 80 tests: concurrency, tampering, crash recovery, red-team regressions
+    │   └── tests/test_cc_hook.py        # hook adapter, driven through the real hook protocol
+    └── landing-ledger/                  # landing ledger
+        ├── SKILL.md / SKILL.zh-CN.md    # for the agent orchestrating a landing check
+        ├── scripts/landing.py           # single file, stdlib only: lint / reconcile (gate) / orphans (reverse scan)
+        ├── scripts/snapshot.sh          # read-only export of a commit for history replay
+        ├── references/schema.md         # debit / voucher format, verdict rules, config
+        ├── references/method.md         # method, gate policy and its data, OpenSpec integration, replay, limits
+        ├── references/prompts/          # planner / implementer / reviewer / false-negative prompt templates
+        ├── examples/demo.sh + demo/     # a fictional service with one sample of each half-landing shape
+        └── tests/test_landing.py        # demo verdicts, three-state gate, check rules, reverse scan
 ```
 
 ## Self-test
 
 ```bash
 cd plugins/double-entry-ledger/skills/double-entry-ledger
-python3 -m unittest discover -s tests
+python3 -m unittest discover -s tests          # 129 tests
+bash examples/demo.sh
+cd ../landing-ledger
+python3 -m unittest discover -s tests          # 40 tests
 bash examples/demo.sh
 ```
 
-## Capabilities
+## Capabilities (ledger.py)
 
 | Capability | Command |
 |---|---|
@@ -93,9 +142,11 @@ bash examples/demo.sh
 
 ## Language note
 
-`SKILL.md` and this README are in English. `references/*.md`, the demo comments and the CLI's messages are currently in Chinese; Claude reads them fine, and English translations are welcome.
+`SKILL.md` files and this README are in English. `docs/`, `experiments/`, `references/*.md`, the demo comments and the CLIs' messages are currently in Chinese; Claude reads them fine, and English translations are welcome.
 
 ## Version
+
+0.5.0 — packaged as a reusable architecture. Adds the `landing-ledger` skill (cross-session landing check of design decisions → code: debit/voucher format, mechanical checks and a gate, reverse scan, read-only snapshots, four sub-agent prompt templates, a fictional demo project, 40 tests including regressions from an adversarial review), generalised from a history replay on a real repo: the gate blocks only high-precision signals, mechanical rejections go to a review list, vouchers gain a `deviations` field, and `lint` flags debits without wiring constraints. Adds `docs/architecture.md` (the two ledgers, the mapping to the five harness layers, positioning, rollout) and `experiments/` (E1–E3 reports, scripts and data; E3 is a de-identified summary). The `double-entry-ledger` skill itself is unchanged (`ledger.py` still reports 0.4.0) apart from a pointer to the new skill.
 
 0.4.0 — adds the Claude Code hook adapter `scripts/cc_hook.py`, registered in SKILL.md's frontmatter so invoking the skill turns it on (tested both as an installed plugin and as a copied skill directory). PreToolUse derives expectations in code and opens the intent, PostToolUse settles it and flags mismatches on the spot, PostToolUseFailure handles "failed but partly took effect", and Stop re-settles everything, shows the ledger's verdict to the user and closes clean periods. SKILL.md gained an "In Claude Code" section (declare task intents before starting) and uses `${CLAUDE_SKILL_DIR}` for `L()`. "Common situations" now separates a buggy tool that *produces* the deliverable (fix or work around it, and say so) from the *checks* (never change them to get a pass) — the 0.3.0 wording made agents in a controlled trial leave an obvious build-script bug unfixed and deliver less.
 

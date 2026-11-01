@@ -1,0 +1,152 @@
+[
+ {
+  "debit_id": "ADR-001#1",
+  "status": "claimed_landed",
+  "defs": [
+   {
+    "file": "src/webhooks/tokens.ts",
+    "line": 3,
+    "symbol": "maskToken"
+   }
+  ],
+  "sites": [
+   {
+    "file": "src/webhooks/tokens.ts",
+    "line": 9,
+    "symbol": "maskToken"
+   }
+  ],
+  "tests": []
+ },
+ {
+  "debit_id": "ADR-001#2",
+  "status": "claimed_landed",
+  "defs": [
+   {
+    "file": "src/util/net.ts",
+    "line": 1,
+    "symbol": "fetchWithTimeout"
+   }
+  ],
+  "sites": [
+   {
+    "file": "src/webhooks/deliver.ts",
+    "line": 4,
+    "symbol": "fetchWithTimeout"
+   }
+  ],
+  "tests": [
+   {
+    "file": "tests/net.test.ts",
+    "symbol": "fetchWithTimeout"
+   }
+  ]
+ },
+ {
+  "debit_id": "ADR-002#1",
+  "status": "admitted_unlanded",
+  "note": "deleteNotebook 直接删除，没有写审计日志；全仓只有 renameNotebook 以 RENAME 调用 recordAudit"
+ },
+ {
+  "debit_id": "ADR-002#2",
+  "status": "superseded",
+  "supersede_ref": "docs/specs/audit/spec.md:6",
+  "note": "方案 B 之后应用内不再生成 requestId；queryAudit 里的去重分支还在"
+ },
+ {
+  "debit_id": "ADR-002#3",
+  "status": "claimed_landed",
+  "defs": [
+   {
+    "file": "src/api/limits.ts",
+    "line": 6,
+    "symbol": "checkPlanLimit"
+   }
+  ],
+  "sites": [
+   {
+    "file": "src/api/routes.ts",
+    "line": 14,
+    "symbol": "checkPlanLimit"
+   }
+  ],
+  "tests": [
+   {
+    "file": "tests/limits.test.ts",
+    "symbol": "checkPlanLimit"
+   }
+  ]
+ },
+ {
+  "debit_id": "ADR-003#1",
+  "status": "claimed_landed",
+  "defs": [
+   {
+    "file": "src/search/index.ts",
+    "line": 3,
+    "symbol": "indexNote"
+   },
+   {
+    "file": "src/notes/store.ts",
+    "line": 3,
+    "symbol": "saveNote"
+   }
+  ],
+  "sites": [
+   {
+    "file": "src/notes/create.ts",
+    "line": 6,
+    "symbol": "indexNote"
+   }
+  ],
+  "tests": [],
+  "note": "索引挪到了调用方 createNote 里，保存后立即索引"
+ },
+ {
+  "debit_id": "ADR-004#1",
+  "status": "claimed_landed",
+  "defs": [
+   {
+    "file": "src/share/links.ts",
+    "line": 6,
+    "symbol": "assertShareAlive"
+   }
+  ],
+  "sites": [
+   {
+    "file": "src/share/links.ts",
+    "line": 12,
+    "symbol": "expiresAt"
+   },
+   {
+    "file": "src/share/links.ts",
+    "line": 23,
+    "symbol": "assertShareAlive"
+   }
+  ],
+  "tests": [],
+  "deviations": [
+   "只有 deleteShareLink 走了 assertShareAlive；openShareLink 不检查过期，过期链接仍能打开"
+  ]
+ },
+ {
+  "debit_id": "ADR-005#1",
+  "status": "claimed_landed",
+  "defs": [
+   {
+    "file": "src/format/upgrade.ts",
+    "line": 1,
+    "symbol": "layoutFromV1"
+   }
+  ],
+  "sites": [
+   {
+    "file": "src/format/loader.ts",
+    "line": 5,
+    "symbol": "layoutFromV1"
+   }
+  ],
+  "tests": [],
+  "note": "文档里的 upgradeLegacyLayout 在代码里叫 layoutFromV1"
+ }
+]

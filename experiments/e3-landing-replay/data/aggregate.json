@@ -1,0 +1,150 @@
+{
+ "note": "脱敏汇总：只有计数，没有任何源码、路径、符号名或业务数据。回放对象是一个闭源的中型 TypeScript 全栈 monorepo。",
+ "replay_points": {
+  "S0": "人工审计之前的最后一个提交（审计找到的 5 处半落地在这一版里都存在）",
+  "R_archive": "比人工审计早 24 天的一次 change 归档提交",
+  "R_head": "修复之后的最新提交"
+ },
+ "design_docs_in_snapshot": "60+ 个 Markdown 文件（ADR、spec、架构、任务清单等）",
+ "subagents": {
+  "planner": 4,
+  "implementer_S0": 9,
+  "adjudicator": 3,
+  "fn_checker": 1
+ },
+ "S0": {
+  "debits_total": 302,
+  "code_checkable": 265,
+  "out_of_scope_process": 37,
+  "verdicts": {
+   "CREDITED": 113,
+   "CREDITED_NO_TEST": 74,
+   "REJECTED": 44,
+   "UNLANDED": 30,
+   "SUPERSEDED": 4,
+   "NO_VOUCHER": 0
+  },
+  "tests_really_ran": "not_checked"
+ },
+ "R_archive": {
+  "debits_code_checkable": 30,
+  "verdicts": {
+   "CREDITED": 16,
+   "CREDITED_NO_TEST": 5,
+   "REJECTED": 2,
+   "UNLANDED": 4,
+   "SUPERSEDED": 3,
+   "NO_VOUCHER": 0
+  },
+  "would_block_archive": true,
+  "note": "借方只取这次归档的 change 涉及的文档（相关 ADR、spec 和 change 文档）"
+ },
+ "R_head": {
+  "debits_code_checkable": 82,
+  "note": "只复跑了 S0 上没入账的那批借方（外加少量相关项），所以驳回占比高，不能和 S0 的分布直接比",
+  "verdicts": {
+   "CREDITED": 5,
+   "CREDITED_NO_TEST": 3,
+   "REJECTED": 46,
+   "UNLANDED": 25,
+   "SUPERSEDED": 3,
+   "NO_VOUCHER": 0
+  },
+  "fixed_items_still_rejected_by_grep": 2,
+  "fixed_items_total": 3
+ },
+ "adjudication_of_78_uncredited_at_S0": {
+  "REJECTED": {
+   "n": 44,
+   "real": 2,
+   "false_positive": 42,
+   "fp_breakdown": {
+    "checker_rules_too_literal": 27,
+    "name_drift_doc_vs_code": 14,
+    "log_text": 1
+   }
+  },
+  "UNLANDED": {
+   "n": 30,
+   "real": 29,
+   "false_positive": 1
+  },
+  "SUPERSEDED": {
+   "n": 4,
+   "real": 4,
+   "false_positive": 0,
+   "all_source_doc_not_reversed": true
+  }
+ },
+ "false_negative_sample_of_credited": {
+  "n": 25,
+  "landed_ok": 22,
+  "gap": 3,
+  "gap_impact": "all low",
+  "gaps_where_voucher_note_already_admitted_deviation": 2
+ },
+ "proposed_gate_at_S0": {
+  "blocking_items": 34,
+  "confirmed_real": 33
+ },
+ "real_gaps_confirmed_by_review": {
+  "total": 35,
+  "by_label": {
+   "REAL_GAP": 13,
+   "PARTIAL": 15,
+   "SUPERSEDED_UNRECORDED": 7
+  },
+  "by_impact": {
+   "high": 3,
+   "medium": 17,
+   "low": 15
+  }
+ },
+ "known_half_landings_from_audit": {
+  "total": 5,
+  "forward_caught": 2,
+  "forward_clue_only": 1,
+  "reverse_scan_caught": 2,
+  "overall": "4 caught + 1 clue",
+  "by_shape": [
+   {
+    "shape": "入口没接（能力存在，文档要求的入口未调用）",
+    "result": "正向抓到：实现会话自认未落地；同一缺口的另一笔借方为已取代未冲销"
+   },
+   {
+    "shape": "决策改了、原文没冲销，写入侧缺失使读侧分支成死代码",
+    "result": "正向抓到：借方要求的写入字面量无落点；对抗凭证同样被驳回"
+   },
+   {
+    "shape": "登记点挪位后漏了一条路径",
+    "result": "只给线索：机械驳回 → 复核员顺着查到具体路径"
+   },
+   {
+    "shape": "有实现、有单测、生产零调用（且该要求没写进任何设计文档）",
+    "result": "正向漏；反向扫描抓到"
+   },
+   {
+    "shape": "立了规矩、零调用点（设计只在代码注释和迭代计划里）",
+    "result": "正向漏；反向扫描抓到"
+   }
+  ],
+  "baseline_existing_heuristic_script_hits": 0
+ },
+ "reverse_scan_S0": {
+  "exported_defs": 484,
+  "zero_prod_ref": 18,
+  "breakdown": {
+   "known_gaps": 2,
+   "test_hooks_by_name": 3,
+   "ops_script_only": 3,
+   "tested_but_unwired_same_shape": 5,
+   "untested_dead_or_lifecycle": 5
+  },
+  "after_filtering_hooks_and_ops": 12
+ },
+ "adversarial_voucher": {
+  "weak_debit_symbol_only": "credited (fooled)",
+  "strong_debit_with_wiring_write_literal": "rejected"
+ },
+ "archive_gate_lead_time_days": 24
+}

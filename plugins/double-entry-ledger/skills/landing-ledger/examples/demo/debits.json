@@ -1,0 +1,193 @@
+[
+ {
+  "id": "ADR-001#1",
+  "source": "docs/decisions/ADR-001-webhooks.md:7",
+  "doc_kind": "adr",
+  "doc_status": "Accepted",
+  "doc_says": "unspecified",
+  "claim": "第三方 token 列表接口只返回后 4 位（maskToken）",
+  "code_checkable": true,
+  "evidence": {
+   "symbols": [
+    "maskToken"
+   ],
+   "call": {
+    "symbol": "maskToken",
+    "scope_hint": "tokens",
+    "must_include": []
+   }
+  }
+ },
+ {
+  "id": "ADR-001#2",
+  "source": "docs/decisions/ADR-001-webhooks.md:8",
+  "doc_kind": "adr",
+  "doc_status": "Accepted",
+  "doc_says": "unspecified",
+  "claim": "投递 webhook 用 fetchWithTimeout，超时 10_000 毫秒",
+  "code_checkable": true,
+  "evidence": {
+   "symbols": [
+    "fetchWithTimeout"
+   ],
+   "call": {
+    "symbol": "fetchWithTimeout",
+    "scope_hint": "webhooks",
+    "must_include": [
+     "10_000"
+    ]
+   }
+  }
+ },
+ {
+  "id": "ADR-002#1",
+  "source": "docs/decisions/ADR-002-audit-log.md:7",
+  "doc_kind": "adr",
+  "doc_status": "Accepted",
+  "doc_says": "unspecified",
+  "claim": "删除笔记本之前由 notebooks 模块调用 recordAudit，action 为 DELETE，写失败就不删",
+  "code_checkable": true,
+  "evidence": {
+   "symbols": [
+    "recordAudit"
+   ],
+   "call": {
+    "symbol": "recordAudit",
+    "scope_hint": "notebooks",
+    "must_include": [
+     "DELETE"
+    ]
+   }
+  }
+ },
+ {
+  "id": "ADR-002#2",
+  "source": "docs/decisions/ADR-002-audit-log.md:8",
+  "doc_kind": "adr",
+  "doc_status": "Accepted",
+  "doc_says": "unspecified",
+  "claim": "每条审计日志带 requestId，queryAudit 按 requestId 去重",
+  "code_checkable": true,
+  "evidence": {
+   "symbols": [
+    "queryAudit"
+   ],
+   "literals": [
+    {
+     "text": "requestId",
+     "role": "write"
+    }
+   ]
+  }
+ },
+ {
+  "id": "ADR-002#3",
+  "source": "docs/decisions/ADR-002-audit-log.md:9",
+  "doc_kind": "adr",
+  "doc_status": "Accepted",
+  "doc_says": "done",
+  "claim": "套餐限额检查 checkPlanLimit 挂在 API 入口中间件",
+  "code_checkable": true,
+  "evidence": {
+   "symbols": [
+    "checkPlanLimit"
+   ],
+   "call": {
+    "symbol": "checkPlanLimit",
+    "scope_hint": "api",
+    "must_include": []
+   }
+  }
+ },
+ {
+  "id": "ADR-002#4",
+  "source": "docs/decisions/ADR-002-audit-log.md:10",
+  "doc_kind": "adr",
+  "doc_status": "Accepted",
+  "doc_says": "unspecified",
+  "claim": "每季度安全负责人人工抽查审计日志",
+  "code_checkable": false,
+  "evidence": {}
+ },
+ {
+  "id": "ADR-003#1",
+  "source": "docs/decisions/ADR-003-search.md:7",
+  "doc_kind": "adr",
+  "doc_status": "Accepted",
+  "doc_says": "unspecified",
+  "claim": "notes/store.ts 的 saveNote 保存成功后调用 indexNote 更新搜索索引",
+  "code_checkable": true,
+  "evidence": {
+   "symbols": [
+    "saveNote",
+    "indexNote"
+   ],
+   "call": {
+    "symbol": "indexNote",
+    "scope_hint": "store.ts",
+    "must_include": []
+   }
+  }
+ },
+ {
+  "id": "ADR-004#1",
+  "source": "docs/decisions/ADR-004-share-links.md:7",
+  "doc_kind": "adr",
+  "doc_status": "Accepted",
+  "doc_says": "done",
+  "claim": "分享链接创建时写 expiresAt，打开过期链接一律 410，统一走 assertShareAlive",
+  "code_checkable": true,
+  "evidence": {
+   "symbols": [
+    "assertShareAlive"
+   ],
+   "call": {
+    "symbol": "assertShareAlive",
+    "scope_hint": "share",
+    "must_include": []
+   },
+   "literals": [
+    {
+     "text": "expiresAt",
+     "role": "write"
+    }
+   ]
+  }
+ },
+ {
+  "id": "ADR-005#1",
+  "source": "docs/decisions/ADR-005-layout-v2.md:7",
+  "doc_kind": "adr",
+  "doc_status": "Accepted",
+  "doc_says": "unspecified",
+  "claim": "打开 v1 文档时 loader 调用 upgradeLegacyLayout",
+  "code_checkable": true,
+  "evidence": {
+   "symbols": [
+    "upgradeLegacyLayout"
+   ],
+   "call": {
+    "symbol": "upgradeLegacyLayout",
+    "scope_hint": "loader",
+    "must_include": []
+   }
+  }
+ },
+ {
+  "id": "ADR-005#2",
+  "source": "docs/decisions/ADR-005-layout-v2.md:8",
+  "doc_kind": "adr",
+  "doc_status": "Accepted",
+  "doc_says": "unspecified",
+  "claim": "升级后把文档的 formatVersion 写回 2",
+  "code_checkable": true,
+  "evidence": {
+   "literals": [
+    {
+     "text": "formatVersion",
+     "role": "write"
+    }
+   ]
+  }
+ }
+]

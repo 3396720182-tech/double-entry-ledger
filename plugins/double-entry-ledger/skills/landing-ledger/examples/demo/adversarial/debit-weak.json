@@ -1,0 +1,19 @@
+[
+ {
+  "id": "ADR-002#1",
+  "source": "docs/decisions/ADR-002-audit-log.md:7",
+  "doc_kind": "adr",
+  "doc_status": "Accepted",
+  "doc_says": "unspecified",
+  "claim": "（同一条决定，但借方只写到「函数存在、被调用」这一层）删除笔记本之前由 notebooks 模块调用 recordAudit，action 为 DELETE，写失败就不删",
+  "code_checkable": true,
+  "evidence": {
+   "symbols": [
+    "recordAudit"
+   ],
+   "call": {
+    "symbol": "recordAudit"
+   }
+  }
+ }
+]

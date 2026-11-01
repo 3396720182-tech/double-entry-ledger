@@ -1,0 +1,20 @@
+✓ happy                   预期不报 / 实际未报  [无故障对照：不应误报]  reconcile ok=True, strict=True, close 成功
+✓ plan_as_result          预期检出 / 实际检出  [intent settle]  mismatch
+✓ copy_not_move           预期检出 / 实际检出  [intent settle（逐条清账）]  mismatch ['exists:tasks/todo/a.md']
+✓ wrong_dst               预期检出 / 实际检出  [intent settle]  mismatch
+✓ stale_report            预期检出 / 实际检出  [intent settle（sha256 changed）]  mismatch ['sha256:report.json']
+✓ tests_fail              预期检出 / 实际检出  [intent settle（json 探针）]  mismatch
+✓ forged_claim            预期检出 / 实际检出  [签名观测 + 严格模式]  模型写入观测 exit=0；settle=mismatch ['未经签名核实的观测（labelled），严格模式拒绝']
+✓ signed_claim            预期不报 / 实际未报  [对照：真实签名观测不应误报]  settled trust=verified
+✓ crash_recovery          预期不报 / 实际未报  [WAL 恢复：不重跑也能结清]  恢复出 ['mv-1']，settle=settled，state:done={'state:done [taska]': '1'}
+✓ external_drift          预期检出 / 实际检出  [reconcile]  reconcile ok=False ['state:done[taska] 账1/实0']
+✓ direct_transition       预期检出 / 实际检出  [受保护科目]  拒绝：受保护科目 ['state:todo', 'state:done'] 的迁移只能
+✓ fake_creation_in_done   预期检出 / 实际检出  [只创建一次规则]  拒绝：违反科目规则，已拒绝记账：world:created [taska] 余额 -2 低于下限 -1（规则 world:cr
+✓ double_done             预期检出 / 实际检出  [intent settle / state 规则]  open 被拒：所有期望的预期变化都是 0（基线已满足或写了 +0），却挂了 then 分录——这等于不做任何事就更
+✓ wrong_content           预期不报 / 实际未报  [已知局限：质量问题本就抓不到]  settled
+✓ collateral_damage       预期不报 / 实际未报  [已知局限：期望之外的副作用抓不到]  settled
+✓ budget_lost_agent       预期检出 / 实际检出  [close（子预算归零）]  close 被拒：budget:agent:A [tokens] 结账时应为 0，当前 1800（规则 budget:agent:*）
+✓ budget_vendor_mismatch  预期检出 / 实际检出  [reconcile --snapshot]  ok=False diff=['800']
+✓ tamper                  预期检出 / 实际检出  [哈希链]  verify ok=False（seq 2: 哈希不符——该记录被改动…），追加被拒
+
+符合预期 18/18
