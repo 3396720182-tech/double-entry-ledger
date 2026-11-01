@@ -824,5 +824,14 @@ class TestCLI(Base):
             self.assertEqual(self.cli("reconcile", "--snapshot", str(snap)), 2)
 
 
+
+class TestProbeGlobGuard(Base):
+    def test_r4_wildcard_in_literal_probe_rejected(self):
+        # 实测里 agent 写过 sha256:packages/*/package.toml changed：按字面路径取数，永远对不上
+        for bad in ("sha256:packages/*/package.toml changed", "exists:out/*.html =1", "json:r/*.json#failed =0"):
+            with self.assertRaises(L.LedgerError):
+                self.led.intent_open("x", [bad])
+        self.led.intent_open("ok", ["glob-count:out/*.html +1"])
+
 if __name__ == "__main__":
     unittest.main()

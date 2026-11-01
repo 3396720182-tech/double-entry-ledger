@@ -45,7 +45,7 @@ try:
 except ImportError:
     msvcrt = None
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 SCHEMA = 1
 GENESIS = "0" * 64
 DELTA_UNIT = "delta"
@@ -448,6 +448,7 @@ def parse_expect(s: str) -> dict:
     if kind == "sha256":
         if op not in ("changed", "unchanged"):
             raise LedgerError(f"sha256 探针的 OP 只能是 changed/unchanged：{s!r}")
+        _check_no_magic(probe)
         return {"probe": probe, "op": op}
     if kind == "claim":
         name = probe.partition(":")[2]
@@ -455,10 +456,20 @@ def parse_expect(s: str) -> dict:
             raise LedgerError(f"claim 名称非法：{probe!r}")
     elif kind not in NUMERIC_PROBES:
         raise LedgerError(f"未知探针类型：{kind}")
+    _check_no_magic(probe)
     if not op or op[0] not in "+-=":
         raise LedgerError(f"OP 应为 +N / -N / =N：{s!r}")
     to_dec(op[1:] if op[0] in "+=" else op)
     return {"probe": probe, "op": op}
+
+
+def _check_no_magic(probe):
+    """只有 glob-count 认通配符；其他探针按字面路径取数，写了通配符会量一个不存在的文件，永远对不上。"""
+    kind, _, _ = probe.partition(":")
+    target = probe_target(probe)
+    if kind != "glob-count" and target and glob.has_magic(target):
+        raise LedgerError(f"{probe!r}：{kind} 探针不展开通配符。多个文件请逐个写一条期望（如 sha256:a/x.toml changed、"
+                          "sha256:b/x.toml changed），或者用 glob-count 数文件个数")
 
 
 def probe_target(probe):

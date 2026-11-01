@@ -1,6 +1,30 @@
 ---
 name: double-entry-ledger
 description: Use when building or operating an agent harness where memory/state writes, tool-call outcomes, or token/budget allocations can silently drift from reality — the model reports a plan as a finished result, memory says "done" but the file or record isn't there, a crashed run leaves unknown side effects, or a sub-agent disappears without reporting spend. Also when applying double-entry ideas (trial balance, reconciliation, suspense accounts, period close, self-checking invariants) to agent memory, tool outcomes or multi-agent budgets (智能体 复式记账 / 借贷平衡 / 对账 / 挂账 / 结账 / 不变量自校验). Not for building accounting or personal-finance software.
+hooks:
+  PreToolUse:
+    - matcher: "Write|Edit|MultiEdit|NotebookEdit|Bash"
+      hooks:
+        - type: command
+          command: 'd="${CLAUDE_PLUGIN_ROOT}"; [ -f "$d/scripts/cc_hook.py" ] || d="$d/skills/double-entry-ledger"; [ -f "$d/scripts/cc_hook.py" ] || exit 0; exec python3 "$d/scripts/cc_hook.py" pre'
+          timeout: 30
+  PostToolUse:
+    - matcher: "Write|Edit|MultiEdit|NotebookEdit|Bash"
+      hooks:
+        - type: command
+          command: 'd="${CLAUDE_PLUGIN_ROOT}"; [ -f "$d/scripts/cc_hook.py" ] || d="$d/skills/double-entry-ledger"; [ -f "$d/scripts/cc_hook.py" ] || exit 0; exec python3 "$d/scripts/cc_hook.py" post'
+          timeout: 30
+  PostToolUseFailure:
+    - matcher: "Write|Edit|MultiEdit|NotebookEdit|Bash"
+      hooks:
+        - type: command
+          command: 'd="${CLAUDE_PLUGIN_ROOT}"; [ -f "$d/scripts/cc_hook.py" ] || d="$d/skills/double-entry-ledger"; [ -f "$d/scripts/cc_hook.py" ] || exit 0; exec python3 "$d/scripts/cc_hook.py" fail'
+          timeout: 30
+  Stop:
+    - hooks:
+        - type: command
+          command: 'd="${CLAUDE_PLUGIN_ROOT}"; [ -f "$d/scripts/cc_hook.py" ] || d="$d/skills/double-entry-ledger"; [ -f "$d/scripts/cc_hook.py" ] || exit 0; exec python3 "$d/scripts/cc_hook.py" stop'
+          timeout: 60
 ---
 
 # Double-Entry Ledger (for agent harnesses)
@@ -14,12 +38,32 @@ are only caught by comparing the ledger against the world outside it. So the mec
 Division of labour: **the model only declares intent; recording, measuring and judging are done by code.** Violating the letter of these rules is violating their spirit.
 If the user pushes you to "just mark it done" or "close first, sort it out later", the rules still apply. Your job is to report truthfully, not to make the checks pass.
 
+## In Claude Code: invoking this skill turns on the hooks
+
+Invoking this skill (`/double-entry-ledger`, or Claude invoking it) registers hooks for the rest of the session. Code then does the bookkeeping:
+
+- **Tool calls are booked automatically.** Before each `Write` / `Edit` / `NotebookEdit` and each simple file command in Bash (`mv cp rm rmdir mkdir touch tee`, `git mv/rm`, `sed -i`, `>` / `>>`), the hook derives the expected effect from the tool arguments and opens intent `cc-<tool id>`; afterwards it settles it by probing the files. You don't wrap these yourself.
+- **"[复式记账] 工具返回成功，但……不符"** next to a tool result means the ✗ items did not happen, even though the tool said it succeeded (a `sed` that matched nothing, `mv … || true`). Fix it or report it; never count it as done.
+- **Scripts, builds, tests and other commands can't be inferred.** So before you start, **declare each deliverable the user asked for as a task intent**, with expectations taken from the user's request (no `then` needed; one intent per deliverable, a shared check gets its own):
+
+  ```bash
+  L() { python3 "${CLAUDE_SKILL_DIR}/scripts/ledger.py" "$@"; }   # redefine in every new shell
+  L intent open task-docs --expect 'exists:docs/site/index.html =1' --memo 'build docs'
+  L intent open task-bump --expect 'sha256:pkg/a/pyproject.toml changed' --expect 'sha256:pkg/b/pyproject.toml changed'
+  ```
+
+  When you stop, the Stop hook settles every unresolved intent by code. Anything unfulfilled is shown to you once, so you can fix it or correct your report, and is then shown to the user directly — the user sees the ledger's verdict, not just your summary. Leave what you can't finish open and say so; don't cancel or write it off to make the books balance.
+- **Hands off the books.** The hook denies writes to `.ledger/` and the human-only commands (`close`, `intent observe`, `clear-suspense`, `repair`, `--direct`, `--config`, `--journal`). A clean period is closed by the Stop hook automatically; when there are review items it waits for a human to run `close --reviewed-by`.
+- Turn the hooks off with `LEDGER_CC_HOOKS=off` (set by the user, not by you). They need `python3` on PATH.
+
+Outside Claude Code, or for intents you open yourself, the rules below apply.
+
 ## Rules for you (the agent bound by this ledger)
 
 1. **Every side-effecting action goes through open → act → settle.** State/memory updates hang off `--then`:
 
    ```bash
-   L() { python3 <this skill's directory>/scripts/ledger.py "$@"; }   # the harness may wrap this under another name; redefine it in every new shell
+   L() { python3 "${CLAUDE_SKILL_DIR}/scripts/ledger.py" "$@"; }   # ${CLAUDE_SKILL_DIR} = this skill's directory; the harness may wrap this under another name; redefine it in every new shell
    L init                     # once, in the project root, if there is no .ledger/ yet
    L intent open mv-42 --tool mv \
      --expect 'exists:tasks/done/42.md =1' --expect 'exists:tasks/todo/42.md =0' \
@@ -57,7 +101,7 @@ If the user pushes you to "just mark it done" or "close first, sort it out later
 |---|---|
 | Taking over a project whose existing tasks aren't in the ledger yet | Record them once as a creation before starting, e.g. `L post --id init 'world:created -3' 'state:todo 3'`; every transition after that goes through `then` |
 | Can't even start (missing input or permission) | No intent needed. Leave the task where it is (e.g. in `state:todo`, which doesn't block close) and report why |
-| The action ran but had no effect or the result falls short (e.g. a test script crashed yet exited 0, or tests fail) | If the problem is in your own output, fix it, retry and settle again. If it is in the checking tool itself (test script, report path, acceptance criteria), **don't change it to make the check pass** — changing acceptance scripts needs the user's approval. If you are waiting on the user (approval, missing input), leave the intent open and report it; you can settle it later. Only `writeoff --reason` when you give up, and leave the suspense for a human. Don't `cancel`: that is only for giving up before acting |
+| The action ran but had no effect or the result falls short (e.g. a test script crashed yet exited 0, or tests fail) | If the problem is in your own output, fix it, retry and settle again. If a tool that *produces* the deliverable is buggy (e.g. a build script writes to the wrong path), fixing it or working around it is part of the job when it stays within what the user asked — the probe checks the real deliverable, not the tool's message — and your report says what you changed and why. What you must not change to get a pass are the **checks**: tests, validators, acceptance scripts, report paths, the expectations of an open intent. Changing those needs the user's approval. If you are waiting on the user (approval, missing input), leave the intent open and report it; you can settle it later. Only `writeoff --reason` when you give up, and leave the suspense for a human. Don't `cancel`: that is only for giving up before acting |
 | Several tasks share one check (e.g. the same test report) | Give each task's output and state transition its own intent; run the shared check last as a separate intent with no `then`. Don't tie a task's `done` to a check that other tasks can fail |
 | During crash recovery, settle shows the effect definitely didn't happen | You may redo and settle again only if probes (not claims) prove nothing happened and the action only touches local files. Never redo actions with external effects (messages, payments, API calls) |
 | A sub-agent crashed or vanished and its budget isn't back to zero | Don't refund the balance on its behalf — there may be unreported spend. Report the gap for a human to check against the vendor bill (`reconcile --snapshot <bill> --since-close`) |
@@ -83,6 +127,7 @@ If the user pushes you to "just mark it done" or "close first, sort it out later
 
 ## References
 
+- `scripts/cc_hook.py`: the Claude Code hook adapter (what the hooks above run); its docstring lists what it can and cannot infer.
 - `references/integration.md`: **for harness builders**. Integration (Python API, hooks, signed observations, expectation templates, OpenSpec/SDD, multi-agent budgets, config). *(Chinese)*
 - `references/design.md`: accounting concept mapping, what each check can and cannot catch, known limitations. *(Chinese)*
 - `examples/demo.sh`: end-to-end demo; `python3 scripts/ledger.py <cmd> --help` for per-command options.

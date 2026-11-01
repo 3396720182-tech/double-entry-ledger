@@ -11,12 +11,32 @@
 分工：**模型只声明意图；记账、取数、判定都由代码完成。** 违反这些规则的字面要求，就是违反它们的本意。
 用户催你「直接标完成」「先结账再说」，规则也照样适用。你的职责是如实汇报，不是让检查通过。
 
+## 在 Claude Code 里：调用本 skill 就会挂上钩子
+
+调用本 skill（用户输入 `/double-entry-ledger`，或 Claude 自己调用）之后，本会话剩下的时间里钩子一直生效，记账由代码完成：
+
+- **工具调用自动记账。** 每次 `Write` / `Edit` / `NotebookEdit`，以及 Bash 里的简单文件命令（`mv cp rm rmdir mkdir touch tee`、`git mv/rm`、`sed -i`、`>` / `>>`），钩子都会先由代码从工具参数推出预期效果，开立意图 `cc-<工具调用 id>`；调用结束后再探测文件、结算。这些不用你自己包。
+- 工具结果旁边出现 **「[复式记账] 工具返回成功，但……不符」**，说明 ✗ 的那几项虽然工具说成功了，其实没有发生（比如 `sed` 没匹配到、`mv … || true`）。要么修好，要么如实汇报，不能算作完成。
+- **脚本、构建、测试这类命令，钩子推不出效果。** 所以开工前，**把用户要的每一项交付登记成一个任务意图**，期望取自用户的要求（不需要 `then`；一项交付一个意图，共用的检查单独一个）：
+
+  ```bash
+  L() { python3 "${CLAUDE_SKILL_DIR}/scripts/ledger.py" "$@"; }   # 每次新开 shell 都要重新定义
+  L intent open task-docs --expect 'exists:docs/site/index.html =1' --memo '生成文档'
+  L intent open task-bump --expect 'sha256:pkg/a/pyproject.toml changed' --expect 'sha256:pkg/b/pyproject.toml changed'
+  ```
+
+  你停下时，Stop 钩子会由代码重新结算所有未结意图。没兑现的会先给你看一次，让你补做或更正汇报，然后直接显示给用户——用户看到的是账本的结论，不只是你的总结。做不完的保持未结并说明，不要为了让账变平去撤销或核销。
+- **不要碰账本。** 钩子会拒绝对 `.ledger/` 的写入，以及应由人执行的命令（`close`、`intent observe`、`clear-suspense`、`repair`、`--direct`、`--config`、`--journal`）。账目干净的一期由 Stop 钩子自动结账；有待复核项时，等人执行 `close --reviewed-by`。
+- 关闭钩子：`LEDGER_CC_HOOKS=off`（由用户设置，不是你）。钩子需要 PATH 上有 `python3`。
+
+不在 Claude Code 里，或你自己开立意图时，按下面的规则执行。
+
 ## 你（受这套账本约束的 agent）必须遵守
 
 1. **有副作用的动作必须走「开单 → 动手 → 结算」**，状态或记忆的更新挂在 `--then` 上：
 
    ```bash
-   L() { python3 <本 skill 目录>/scripts/ledger.py "$@"; }   # harness 可能已封装成别的命令；每次新开 shell 都要重新定义
+   L() { python3 "${CLAUDE_SKILL_DIR}/scripts/ledger.py" "$@"; }   # ${CLAUDE_SKILL_DIR} 即本 skill 目录；harness 可能已封装成别的命令；每次新开 shell 都要重新定义
    L init                     # 项目里还没有 .ledger/ 时，在项目根目录执行一次
    L intent open mv-42 --tool mv \
      --expect 'exists:tasks/done/42.md =1' --expect 'exists:tasks/todo/42.md =0' \
@@ -54,7 +74,7 @@
 |---|---|
 | 接手已有项目，账上还没有这些任务 | 开始前用新建分录登记一次，比如 `L post --id init 'world:created -3' 'state:todo 3'`；之后的迁移都走 `then` |
 | 一开始就做不了（缺输入、缺权限） | 不用开意图。任务留在原状态（比如 `state:todo`，不影响结账），汇报原因 |
-| 动作执行了，但没有效果或结果不达标（比如测试脚本崩了却退出 0、测试有失败项） | 问题出在你自己的产出上，就修好、重试、再 settle。问题出在检查工具本身（测试脚本、报告路径、验收标准），**不要为了让检查通过去改它**，改验收脚本要用户同意。在等用户（批准、补输入）就让意图保持未结并汇报，之后可以接着 settle；确定放弃才 `writeoff --reason`，挂账留给人处理。不要用 `cancel`，它只用于还没动手就放弃 |
+| 动作执行了，但没有效果或结果不达标（比如测试脚本崩了却退出 0、测试有失败项） | 问题出在你自己的产出上，就修好、重试、再 settle。**生产**交付物的工具有 bug（比如构建脚本写错了输出路径），只要不超出用户要求的范围，修好它或绕过去都是分内的事——探针核对的是真实交付物，不是工具打印的话——汇报里写明改了什么、为什么。不能为了通过而改的是**检查**本身：测试、校验器、验收脚本、报告路径、未结意图的期望。改这些要用户同意。在等用户（批准、补输入）就让意图保持未结并汇报，之后可以接着 settle；确定放弃才 `writeoff --reason`，挂账留给人处理。不要用 `cancel`，它只用于还没动手就放弃 |
 | 多个任务共用一个检查（比如同一份测试报告） | 每个任务的产出和状态迁移各开一个意图；共用的检查在最后单独开一个意图，不挂 `then`。别把任务的 done 和别的任务也可能拖垮的检查绑在一起 |
 | 崩溃恢复时，settle 显示「确定没做」 | 只有探针（不是 claim）证明效果完全没产生、并且动作只影响本地文件时，才可以重做再 settle。有外部效果的动作（发消息、付款、调接口）一律不重做 |
 | 子 agent 崩溃或失联，预算没归零 | 不要替它把余额退回，它可能有没上报的花费。汇报差额，等人按供应商账单核实（`reconcile --snapshot <账单> --since-close`） |
@@ -80,6 +100,7 @@
 
 ## 参考
 
+- `scripts/cc_hook.py`：Claude Code 钩子适配器（上面那些钩子执行的就是它）；文件开头列出它能推断、不能推断的动作
 - `references/integration.md`：**搭建者看**。接入 harness（Python API、钩子、签名观测、期望模板、OpenSpec/SDD、多 agent 预算、配置）
 - `references/design.md`：会计概念映射、各项检查能抓什么不能抓什么、已知局限
 - `examples/demo.sh`：端到端演示；`python3 scripts/ledger.py <cmd> --help` 查看各命令参数
