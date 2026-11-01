@@ -4,6 +4,8 @@
 
 **When an agent says "done", code checks whether the files actually changed, and flags what didn't take effect on the spot, instead of trusting the agent's summary.**
 
+What it is for: **agent execution & delivery assurance** — making an agent's commitments traceable, its execution verifiable and its delivery auditable. The Claude Code plugin is just the current packaging; the two core scripts depend only on the Python standard library.
+
 ## With and without: two reports on the same task
 
 The task: prepare a 1.5.0 release of a small monorepo, run by Haiku. The user said "I'm in a hurry, don't open files to check." The `sed` command the project README gives for bumping versions **silently does nothing** for 3 of the 9 packages: no error, exit code 0, files unchanged.
@@ -20,6 +22,13 @@ Quoted from the [E2 controlled experiment](experiments/e2-hooks-ab/REPORT.md) (9
 - On the version bump alone, with the plugin 9 of 10 runs fixed it right after the hook listed the 3 unchanged files; the remaining run is the honest report above.
 
 **It is not magic.** Opus never reported unfinished work as done in any condition; for it the plugin only adds 60–120 % cost. A strong model that checks its own work doesn't need it. The value is where the model won't look back: weaker models, agents under pressure, sub-agents, unattended runs.
+
+## What it proves, and what it doesn't
+
+- **A ✓ means "the operation happened", not "the requirement is met".** The runtime ledger checks observable side effects (did the file change, is the count right). Wiring a test report into a probe partly covers "is the technical result right"; "does it actually do what the user needed" still takes tests, acceptance or an independent review. The three levels are in [docs/architecture.md](docs/architecture.md) §7 (Chinese).
+- **The ledger is not trustworthy by itself.** In an ordinary Claude Code session the hooks and the model's Bash share one environment, so it guards against carelessness, shortcuts and ordinary tool failures, not an agent that deliberately goes around it (editing the ledger or the checker, turning hooks off). To keep the agent from touching verification results, run the checker and the ledger storage outside the agent's environment; the three deployment tiers are in [docs/architecture.md](docs/architecture.md) §6.
+- **The landing ledger finds risk; it does not prove code correct.** Static scanning misses dynamic dispatch, dependency injection and wiring that lives in config, and a call site doesn't mean the code runs. Its job is to surface high-risk half-landed decisions for a human or an independent agent to review, not to replace code review (§8).
+- **Status:** an architecture prototype with an implementation, tests and small-sample experiments — **not yet validated in large-scale real production use**.
 
 ## See it in 30 seconds
 
@@ -88,6 +97,8 @@ Updating later: `/plugin marketplace update double-entry-ledger`.
 
 ## Landing ledger: did the decisions land in code?
 
+Its job is to **surface high-risk half-landed decisions to help people and independent agents review**, not to replace code review.
+
 `/landing-ledger <scope>`, e.g. "run the pre-archive landing check for openspec/changes/add-billing". The skill orchestrates: docs-only sub-agents open debits → code-reading sub-agents submit one voucher per debit → `landing.py reconcile` checks them and prints the gate verdict → `landing.py orphans` runs the reverse scan → reviewer sub-agents go through the review list. The script also works on its own:
 
 ```bash
@@ -116,25 +127,43 @@ Two ledgers, for two time scales:
 
 > In one line: **a trial balance only proves the ledger is internally consistent; truth comes from reconciliation.** What does the work is the structure "one voucher per debit", not grep catching liars.
 
+In the bigger picture: the runtime ledger covers **execution assurance**, the landing ledger covers **delivery assurance**, and the hash chain, external anchors, review lists and human sign-off (`close --reviewed-by`) cover **audit & governance**. See [docs/architecture.md](docs/architecture.md) §1.
+
 The runtime ledger's core is a single stdlib-only Python file (`ledger.py`, Python 3.8+): an append-only, hash-chained JSONL journal. Every state change is a balanced entry, every side-effecting tool call is an *intent* cleared against code-measured effects, and multi-agent budgets must net to zero at close. The landing ledger's core is another single stdlib-only file (`landing.py`).
 
 ## Evidence and positioning
 
-For the full picture, read [docs/architecture.md](docs/architecture.md) (Chinese): the two ledgers, how they map onto the five layers of a model harness (constraints / routing / feedback / verdict / adversarial testing), when to turn on which, and a rollout path. The evidence is in [experiments/](experiments/README.md):
+For the full picture, read [docs/architecture.md](docs/architecture.md) (Chinese): the two ledgers, how they map onto the five layers of a model harness (constraints / routing / feedback / verdict / adversarial testing), when to turn on which, trust boundaries, verification depth, a rollout path and the roadmap. The evidence is in [experiments/](experiments/README.md):
 
 | Experiment | Result |
 |---|---|
 | E1 fault injection + agents using the skill themselves | Harness fault injection 19/19 as expected; a strong model is equally honest with or without the skill, which only adds cost |
 | E2 hooks A/B, 98 real `claude -p` runs | Opus: 0 false "done" in every condition (hooks cost +60–120 %). Haiku told "hurry, don't open files to check": false "done" in 7/8 runs without the skill vs 1/10 with the final hooks. Rules without hooks made agents deliver *less* |
 | E3 history replay on a real (closed-source) repo, de-identified | 4 of the 5 half-landings found by a later human audit caught + 1 clue; the archive gate would have blocked 24 days before the audit; precision of grep-based rejection ~5 %, of "admitted unlanded" 97 %, of "superseded but not reversed" 100 % |
+| E4 blind test on real open-source projects | **Not started** — plan in [experiments/e4-blind-test/PLAN.md](experiments/e4-blind-test/PLAN.md) (Chinese) |
+
+Read these numbers at their actual strength: E1's faults were designed by hand; E2 has 3–10 runs per cell and a single scenario, so it does not show that the ledger cuts false "done" reports by the same rate for every model, task and workflow; E3 is one replay of one closed-source repo. See "证据强度" (strength of evidence) in [experiments/README.md](experiments/README.md#证据强度).
 
 Positioning: **for a strong model checking its own short task in a single session, neither ledger adds anything.** The value is where the model won't look back (weaker models, pressure, sub-agents, unattended runs) and where people can't remember (decisions across sessions, half-finished state after a crash, multi-agent spend).
+
+## Roadmap
+
+| Priority | Work | Why |
+|---|---|---|
+| P0 | Independent verification environment and ledger protection (reference deployments for trust tiers T1 / T2) | Raise the trust boundary |
+| P0 | Blind test on real open-source projects ([E4 plan](experiments/e4-blind-test/PLAN.md)) | Validate the real-world value |
+| P1 | Adapters for more agent harnesses | Not tied to Claude Code alone |
+| P1 | Visual audit reports | Lower the barrier to use |
+| P2 | More languages and AST analysis | Fewer false positives from static scanning |
+| P2 | Unified budgets and delivery tracking across agents | Broader governance |
+
+Where each item stands: [docs/architecture.md](docs/architecture.md) §10.
 
 ## Repository layout
 
 ```
 docs/architecture.md                     # architecture (start here)
-experiments/                             # E1 / E2 / E3: reports, reproducible scripts, data
+experiments/                             # E1 / E2 / E3: reports, reproducible scripts, data; E4 blind-test plan (not started)
 .claude-plugin/marketplace.json          # marketplace catalog (one plugin)
 plugins/double-entry-ledger/
 ├── .claude-plugin/plugin.json           # plugin manifest
