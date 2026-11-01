@@ -60,13 +60,13 @@ plugins/double-entry-ledger/
 Claude Code 2.1.275 及以上，一步装好：
 
 ```
-/plugin install double-entry-ledger --marketplace yzx-labs/double-entry-ledger
+/plugin install double-entry-ledger --marketplace 3396720182-tech/double-entry-ledger
 ```
 
 或者传统的两步：
 
 ```
-/plugin marketplace add yzx-labs/double-entry-ledger
+/plugin marketplace add 3396720182-tech/double-entry-ledger
 /plugin install double-entry-ledger@double-entry-ledger
 ```
 
